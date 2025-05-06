@@ -57,10 +57,9 @@ connectBtn.onclick = () => {
         });
 
         stompClient.subscribe('/user/' + localIdInp.value + "/topic/call", (call) => {
-            console.log("Call From: " + call.body)
-            remoteID = call.body;
-            console.log("Remote ID: " + call.body)
+            console.log('My Console log: Receiving call from :',call.body)
 
+            remoteID = call.body;
             localPeer.ontrack = (event) => {
                 // Setting Remote stream in remote video element
                 remoteVideo.srcObject = event.streams[0]
@@ -74,8 +73,7 @@ connectBtn.onclick = () => {
                         lable: event.candidate.sdpMLineIndex,
                         id: event.candidate.candidate,
                     }
-                    console.log("Sending Candidate")
-                    console.log(candidate)
+                    console.log('My Console log: My Candidate Is:',candidate)
                     stompClient.send("/app/candidate", {}, JSON.stringify({
                         "toUser": call.body,
                         "fromUser": localID,
@@ -91,7 +89,7 @@ connectBtn.onclick = () => {
 
             localPeer.createOffer().then(description => {
                 localPeer.setLocalDescription(description);
-                console.log("Setting Description" + description);
+                console.log("My Console log: My Setting Description" + description);
                 stompClient.send("/app/offer", {}, JSON.stringify({
                     "toUser": call.body,
                     "fromUser": localID,
@@ -101,11 +99,8 @@ connectBtn.onclick = () => {
         });
 
         stompClient.subscribe('/user/' + localIdInp.value + "/topic/offer", (offer) => {
-            console.log("Offer came")
             var o = JSON.parse(offer.body)["offer"]
-            console.log(offer.body)
-            console.log(new RTCSessionDescription(o))
-            console.log(typeof (new RTCSessionDescription(o)))
+            console.log('My Console log: Offer Came with body',offer.body)
 
             localPeer.ontrack = (event) => {
                 remoteVideo.srcObject = event.streams[0]
@@ -131,7 +126,7 @@ connectBtn.onclick = () => {
             localStream.getTracks().forEach(track => {
                 localPeer.addTrack(track, localStream);
             });
-
+            console.log('My Console log: And I am sending back with my Description',new RTCSessionDescription(o))
             localPeer.setRemoteDescription(new RTCSessionDescription(o))
             localPeer.createAnswer().then(description => {
                 localPeer.setLocalDescription(description)
@@ -147,23 +142,20 @@ connectBtn.onclick = () => {
         });
 
         stompClient.subscribe('/user/' + localIdInp.value + "/topic/answer", (answer) => {
-            console.log("Answer Came")
             var o = JSON.parse(answer.body)["answer"]
-            console.log(o)
+            console.log("My Console log: My Console log:Answer Came And I reply with my Description",new RTCSessionDescription(o))
             localPeer.setRemoteDescription(new RTCSessionDescription(o))
 
         });
 
         stompClient.subscribe('/user/' + localIdInp.value + "/topic/candidate", (answer) => {
-            console.log("Candidate Came")
             var o = JSON.parse(answer.body)["candidate"]
-            console.log(o)
-            console.log(o["lable"])
-            console.log(o["id"])
             var iceCandidate = new RTCIceCandidate({
                 sdpMLineIndex: o["lable"],
                 candidate: o["id"],
             })
+
+            console.log("My Console log: Candidate Came And I send back with the candidate",iceCandidate)
             localPeer.addIceCandidate(iceCandidate)
         });
 
