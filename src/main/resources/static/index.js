@@ -1,176 +1,151 @@
 const localVideo = document.getElementById("localVideo");
-const remoteVideo = document.getElementById("remoteVideo");
-const localIdInp = document.getElementById("localId");
-const connectBtn = document.getElementById("connectBtn");
-const remoteIdInp = document.getElementById("remoteId");
-const callBtn = document.getElementById("callBtn");
+const userIdInp = document.getElementById("userId");
+const roomIdInp = document.getElementById("roomId");
+const joinBtn = document.getElementById("joinBtn");
 const testConnection = document.getElementById("testConnection");
+const videosDiv = document.getElementById("videos");
 let localStream;
-let remoteStream;
-let localPeer;
-let remoteID;
-let localID;
 let stompClient;
+let userId;
+let roomId;
+let device;
+let sendTransport;
+let recvTransport;
+const consumers = new Map();
 
-
-// ICE Server Configurations
+// Connect to mediasoup server
+const socket = io('https://192.168.1.6:3000'); // Update for production
+// ICE Servers
 const iceServers = {
-    iceServer: [
-        {urls: "stun:stun.l.google.com:19302"}
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }
+        // Add TURN server for production
     ]
-}
+};
 
-localPeer = new RTCPeerConnection(iceServers)
-
-
-navigator.mediaDevices.getUserMedia({video: true, audio: true})
+// Initialize local media stream
+navigator.mediaDevices.getUserMedia({ video: true, audio: true })
     .then(stream => {
-        localStream = stream
-
-        // console.log(stream.getTracks()[0])
-        // console.log(stream.getTracks()[1])
-        // console.log(localStream.getTracks()[0])
-        // console.log(localStream.getTracks()[1])
-
+        localStream = stream;
         localVideo.srcObject = stream;
-        // access granted, stream is the webcam stream
     })
     .catch(error => {
-        // access denied or error occurred
-        console.log(error)
+        console.error("Error accessing media devices:", error);
     });
 
+joinBtn.onclick = () => {
+    userId = userIdInp.value;
+    roomId = roomIdInp.value;
+    if (!userId || !roomId) {
+        alert("Please enter User ID and Room ID");
+        return;
+    }
 
-connectBtn.onclick = () => {
-    // Connect to Websocket Server
-    var socket = new SockJS('/websocket', {debug: false});
-    stompClient = Stomp.over(socket);
-    localID = localIdInp.value
-    console.log("My ID: " + localID)
-    stompClient.connect({}, frame => {
+    // Connect to Spring Boot signaling server
+    const stompSocket = new SockJS('/websocket', {debug: false}); // Update for production
+    stompClient = Stomp.over(stompSocket);
+    stompClient.connect({}, () => {
+        // Join mediasoup room
+        socket.emit('joinRoom', { roomId, userId }, async ({ rtpCapabilities }) => {
+            device = new mediasoupClient.Device();
+            await device.load({ routerRtpCapabilities: rtpCapabilities });
 
-        console.log(frame)
+            // Create send transport
+            socket.emit('createTransport', { isProducer: true }, async ({ id, iceParameters, iceCandidates, dtlsParameters }) => {
+                sendTransport = device.createSendTransport({
+                    id,
+                    iceParameters,
+                    iceCandidates,
+                    dtlsParameters,
+                    iceServers
+                });
 
-        // Subscribe to testing URL not very important
-        stompClient.subscribe('/topic/testServer', function (test) {
-            console.log('Received: ' + test.body);
-        });
+                sendTransport.on('connect', ({ dtlsParameters }, callback) => {
+                    socket.emit('connectTransport', { transportId: id, dtlsParameters }, callback);
+                });
 
-        stompClient.subscribe('/user/' + localIdInp.value + "/topic/call", (call) => {
-            console.log('My Console log: Receiving call from :',call.body)
+                sendTransport.on('produce', async ({ kind, rtpParameters }, callback) => {
+                    socket.emit('produce', { transportId: id, kind, rtpParameters }, ({ id }) => {
+                        callback({ id });
+                    });
+                });
 
-            remoteID = call.body;
-            localPeer.ontrack = (event) => {
-                // Setting Remote stream in remote video element
-                remoteVideo.srcObject = event.streams[0]
-            }
-
-
-            localPeer.onicecandidate = (event) => {
-                if (event.candidate) {
-                    var candidate = {
-                        type: "candidate",
-                        lable: event.candidate.sdpMLineIndex,
-                        id: event.candidate.candidate,
-                    }
-                    console.log('My Console log: My Candidate Is:',candidate)
-                    stompClient.send("/app/candidate", {}, JSON.stringify({
-                        "toUser": call.body,
-                        "fromUser": localID,
-                        "candidate": candidate
-                    }))
-                }
-            }
-
-            // Adding Audio and Video Local Peer
-            localStream.getTracks().forEach(track => {
-                localPeer.addTrack(track, localStream);
+                // Produce audio and video
+                localStream.getTracks().forEach(async track => {
+                    await sendTransport.produce({ track });
+                });
             });
 
-            localPeer.createOffer().then(description => {
-                localPeer.setLocalDescription(description);
-                console.log("My Console log: My Setting Description" + description);
-                stompClient.send("/app/offer", {}, JSON.stringify({
-                    "toUser": call.body,
-                    "fromUser": localID,
-                    "offer": description
-                }))
-            })
-        });
+            // Create receive transport
+            socket.emit('createTransport', { isProducer: false }, async ({ id, iceParameters, iceCandidates, dtlsParameters }) => {
+                recvTransport = device.createRecvTransport({
+                    id,
+                    iceParameters,
+                    iceCandidates,
+                    dtlsParameters,
+                    iceServers
+                });
 
-        stompClient.subscribe('/user/' + localIdInp.value + "/topic/offer", (offer) => {
-            var o = JSON.parse(offer.body)["offer"]
-            console.log('My Console log: Offer Came with body',offer.body)
-
-            localPeer.ontrack = (event) => {
-                remoteVideo.srcObject = event.streams[0]
-            }
-            localPeer.onicecandidate = (event) => {
-                if (event.candidate) {
-                    var candidate = {
-                        type: "candidate",
-                        lable: event.candidate.sdpMLineIndex,
-                        id: event.candidate.candidate,
-                    }
-                    console.log("Sending Candidate")
-                    console.log(candidate)
-                    stompClient.send("/app/candidate", {}, JSON.stringify({
-                        "toUser": remoteID,
-                        "fromUser": localID,
-                        "candidate": candidate
-                    }))
-                }
-            }
-
-            // Adding Audio and Video Local Peer
-            localStream.getTracks().forEach(track => {
-                localPeer.addTrack(track, localStream);
+                recvTransport.on('connect', ({ dtlsParameters }, callback) => {
+                    socket.emit('connectTransport', { transportId: id, dtlsParameters }, callback);
+                });
             });
-            console.log('My Console log: And I am sending back with my Description',new RTCSessionDescription(o))
-            localPeer.setRemoteDescription(new RTCSessionDescription(o))
-            localPeer.createAnswer().then(description => {
-                localPeer.setLocalDescription(description)
-                console.log("Setting Local Description")
-                console.log(description)
-                stompClient.send("/app/answer", {}, JSON.stringify({
-                    "toUser": remoteID,
-                    "fromUser": localID,
-                    "answer": description
-                }));
-
-            })
         });
 
-        stompClient.subscribe('/user/' + localIdInp.value + "/topic/answer", (answer) => {
-            var o = JSON.parse(answer.body)["answer"]
-            console.log("My Console log: My Console log:Answer Came And I reply with my Description",new RTCSessionDescription(o))
-            localPeer.setRemoteDescription(new RTCSessionDescription(o))
-
+        // Handle new producer (new stream available)
+        socket.on('newProducer', ({ producerId, userId: remoteUserId, kind }) => {
+            if (remoteUserId !== userId) {
+                socket.emit('consume', {
+                    transportId: recvTransport.id,
+                    producerId,
+                    rtpCapabilities: device.rtpCapabilities
+                }, ({ id, producerId, kind, rtpParameters }) => {
+                    recvTransport.consume({
+                        id,
+                        producerId,
+                        kind,
+                        rtpParameters
+                    }).then(consumer => {
+                        consumers.set(consumer.id, consumer);
+                        let video = document.getElementById(`video-${remoteUserId}`);
+                        if (!video) {
+                            video = document.createElement("video");
+                            video.id = `video-${remoteUserId}`;
+                            video.autoplay = true;
+                            videosDiv.appendChild(video);
+                        }
+                        video.srcObject = new MediaStream([consumer.track]);
+                        consumer.resume();
+                    });
+                });
+            }
         });
 
-        stompClient.subscribe('/user/' + localIdInp.value + "/topic/candidate", (answer) => {
-            var o = JSON.parse(answer.body)["candidate"]
-            var iceCandidate = new RTCIceCandidate({
-                sdpMLineIndex: o["lable"],
-                candidate: o["id"],
-            })
-
-            console.log("My Console log: Candidate Came And I send back with the candidate",iceCandidate)
-            localPeer.addIceCandidate(iceCandidate)
+        // Subscribe to room join notifications
+        stompClient.subscribe(`/user/${userId}/topic/room/${roomId}/join`, (message) => {
+            console.log(`New user joined: ${message.body}`);
+            // No offer/answer needed with SFU
         });
 
+        // Subscribe to room members list
+        stompClient.subscribe(`/user/${userId}/topic/room/${roomId}/members`, (message) => {
+            const members = JSON.parse(message.body);
+            console.log(`Room members: ${members}`);
+            // No action needed; mediasoup handles connections
+        });
 
-        stompClient.send("/app/addUser", {}, localIdInp.value)
+        // Join the room via signaling server
+        stompClient.send("/app/joinRoom", {}, JSON.stringify({
+            userId: userId,
+            roomId: roomId
+        }));
 
-    })
-
-}
-
-callBtn.onclick = () => {
-    remoteID = remoteIdInp.value
-    stompClient.send("/app/call", {}, JSON.stringify({"callTo": remoteIdInp.value, "callFrom": localIdInp.value}))
-}
+        console.log("My console log: Click joined Room")
+    });
+};
 
 testConnection.onclick = () => {
-    stompClient.send("/app/testServer", {}, "Test Server")
-}
+    if (stompClient) {
+        stompClient.send("/app/testServer", {}, "Test Server");
+    }
+};

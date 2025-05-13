@@ -3,89 +3,104 @@ package com.example.webrtc;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 
-import java.util.ArrayList;
+import java.util.*;
 
 @Controller
 public class MainController {
 
-    ArrayList<String> users = new ArrayList<String>();
+    // Map of roomId to set of userIds
+    private final Map<String, Set<String>> rooms = new HashMap<>();
 
     @Autowired
     SimpMessagingTemplate simpMessagingTemplate;
 
-
-    @RequestMapping(value = "/",method =  RequestMethod.GET)
-    public String Index(){
+    @RequestMapping(value = "/", method = RequestMethod.GET)
+    public String Index() {
         return "index";
     }
 
     @MessageMapping("/testServer")
-    @SendTo("/topic/testServer")
-    public String testServer(String Test){
-        System.out.println("Testing Server");
-        return Test;
+    public void testServer(String test) {
+        System.out.println("Testing Server: " + test);
+        simpMessagingTemplate.convertAndSend("/topic/testServer", test);
     }
 
-    @MessageMapping("/addUser")
-    public void addUser(String user){
-        System.out.println("Adding User");
-        users.add(user);
-        for (String u :users) {
-            System.out.println(u);
+    @MessageMapping("/joinRoom")
+    public void joinRoom(String joinData) {
+        JSONObject jsonObject = new JSONObject(joinData);
+        String userId = jsonObject.getString("userId");
+        String roomId = jsonObject.getString("roomId");
+
+        // Add user to room
+        rooms.computeIfAbsent(roomId, k -> new HashSet<>()).add(userId);
+        System.out.println("User " + userId + " joined room " + roomId);
+
+        // Notify all room members (except the joining user) of the new user
+        for (String member : rooms.get(roomId)) {
+            if (!member.equals(userId)) {
+                simpMessagingTemplate.convertAndSendToUser(
+                        member,
+                        "/topic/room/" + roomId + "/join",
+                        userId
+                );
+            }
         }
-        System.out.println("User Added Successfully");
-    }
 
-    @MessageMapping("/call")
-    public void Call(String call){
-        JSONObject jsonObject = new JSONObject(call);
-        System.out.println("Calling to: "+jsonObject.get("callTo")+" Call from "+jsonObject.get("callFrom"));
-        System.out.println("Calling to class: "+jsonObject.get("callTo").getClass()+" Call from class "+jsonObject.get("callFrom").getClass());
-        simpMessagingTemplate.convertAndSendToUser(jsonObject.getString("callTo"),"/topic/call",jsonObject.get("callFrom"));
+        // Send current room members to the joining user
+        simpMessagingTemplate.convertAndSendToUser(
+                userId,
+                "/topic/room/" + roomId + "/members",
+                rooms.get(roomId).toArray()
+        );
     }
 
     @MessageMapping("/offer")
-    public void Offer(String offer){
-
-        System.out.println("Offer Came");
+    public void offer(String offer) {
         JSONObject jsonObject = new JSONObject(offer);
-        System.out.println(jsonObject.get("offer"));
-        System.out.println(jsonObject.get("toUser"));
-        System.out.println(jsonObject.get("fromUser"));
-        simpMessagingTemplate.convertAndSendToUser(jsonObject.getString("toUser"),"/topic/offer",offer);
-        System.out.println("Offer Sent");
+        String roomId = jsonObject.getString("roomId");
+        String toUser = jsonObject.getString("toUser");
+        String fromUser = jsonObject.getString("fromUser");
+
+        System.out.println("Offer from " + fromUser + " to " + toUser + " in room " + roomId);
+        simpMessagingTemplate.convertAndSendToUser(
+                toUser,
+                "/topic/room/" + roomId + "/offer",
+                offer
+        );
     }
 
     @MessageMapping("/answer")
-    public void Answer(String answer){
-        System.out.println("Answer came");
-        System.out.println(answer);
+    public void answer(String answer) {
         JSONObject jsonObject = new JSONObject(answer);
-        System.out.println(jsonObject.get("toUser"));
-        System.out.println(jsonObject.get("fromUser"));
-        System.out.println(jsonObject.get("answer"));
-        simpMessagingTemplate.convertAndSendToUser(jsonObject.getString("toUser"),"/topic/answer",answer);
-        System.out.println("Answer Sent");
+        String roomId = jsonObject.getString("roomId");
+        String toUser = jsonObject.getString("toUser");
+        String fromUser = jsonObject.getString("fromUser");
+
+        System.out.println("Answer from " + fromUser + " to " + toUser + " in room " + roomId);
+        simpMessagingTemplate.convertAndSendToUser(
+                toUser,
+                "/topic/room/" + roomId + "/answer",
+                answer
+        );
     }
+
     @MessageMapping("/candidate")
-    public void Candidate(String candidate){
-        System.out.println("Candidate came");
+    public void candidate(String candidate) {
         JSONObject jsonObject = new JSONObject(candidate);
-        System.out.println(jsonObject.get("toUser"));
-        System.out.println(jsonObject.get("fromUser"));
-        System.out.println(jsonObject.get("candidate"));
-        simpMessagingTemplate.convertAndSendToUser(jsonObject.getString("toUser"),"/topic/candidate",candidate);
-        System.out.println("Candidate Sent");
+        String roomId = jsonObject.getString("roomId");
+        String toUser = jsonObject.getString("toUser");
+        String fromUser = jsonObject.getString("fromUser");
 
-
+        System.out.println("Candidate from " + fromUser + " to " + toUser + " in room " + roomId);
+        simpMessagingTemplate.convertAndSendToUser(
+                toUser,
+                "/topic/room/" + roomId + "/candidate",
+                candidate
+        );
     }
-
-
-
 }
