@@ -15,9 +15,9 @@ let stompClient;
 
 // ICE Server Configurations
 const iceServers = {
-    iceServer: {
-        urls: "stun:stun.l.google.com:19302"
-    }
+    iceServer: [
+        {urls: "stun:stun.l.google.com:19302"}
+    ]
 }
 
 localPeer = new RTCPeerConnection(iceServers)
