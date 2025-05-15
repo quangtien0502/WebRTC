@@ -14,7 +14,7 @@ let recvTransport;
 const consumers = new Map();
 
 // Connect to mediasoup server
-const socket = io('https://192.168.1.6:3000'); // Update for production
+const socket = io('http://localhost:3000'); // Update for production
 // ICE Servers
 const iceServers = {
     iceServers: [
